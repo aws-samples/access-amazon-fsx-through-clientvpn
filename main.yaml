@@ -1,0 +1,509 @@
+Description: This template creates a VPC with 6 subnets, Amazon FSx for Windows file system, and ClientVPN for private connection with authentication via AWS Managed AD.
+
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+
+  # VPC Parameters
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  ADSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the Microsoft AD subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.1.0/24
+
+  ADSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the Microsoft AD subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.2.0/24
+
+  FSxSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the FSx for Windows subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.3.0/24
+
+  FSxSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the FSx for Windows subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.4.0/24
+
+  VPNSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the Client VPN subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.5.0/24
+
+  VPNSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the Client VPN subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.6.0/24  
+
+  # Microsoft AD Parameters
+
+  ADEdition:
+    Description: >
+      Valid values include Standard and
+      Enterprise. The default is Enterprise.
+    Type: String
+    Default: Standard
+    AllowedValues:
+    - Standard
+    - Enterprise
+
+  ADDomainName:
+    Description: >
+      The fully qualified name for the Microsoft Active Directory
+      in AWS, such as corp.example.com. The name doesn't need to be
+      publicly resolvable; it will resolve inside your VPC only.
+    Type: String
+    Default: corp.example.com
+
+  ADShortName:
+    Description: >
+      The NetBIOS name for your domain, such as CORP. If you don't specify
+      a value, AWS Directory Service uses the first part of your directory
+      DNS server name. For example, if your directory DNS server name is
+      corp.example.com, AWS Directory Service specifies CORP for the NetBIOS
+      name.
+    Type: String
+    Default: corp
+
+  ADPassword:
+    Description: >
+      The password for the default administrative user, Admin.
+    Type: String
+    NoEcho: true
+
+  # Client VPN Parameters
+
+  VPNClientCidrBlock:
+    Description: >
+      The IPv4 address range, in CIDR notation, from which to assign client IP addresses. 
+      The address range cannot overlap with the local CIDR of the VPC in which the associated 
+      subnet is located, or the routes that you add manually. 
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-9]|3[0-2]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-32
+    Type: String
+    Default: 10.254.0.0/16
+
+  VPNServerCertArn:
+    Description: Specify Server Cert Arn for VPN endpoint.
+    Type: String
+
+  VPNConnectionLogs:
+    Description: Specifiy if you want to log ConnectionLogOptions
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    Default: false
+
+  # FSx 
+  FSxStorageCapacity:
+    Description: Specify the storage capacity of the file system being created, in gibibytes. 
+      Valid values are 32 GiB - 65,536 GiB. Consider choosing a higher value for greater capacity.
+    Type: Number
+    Default: 32
+
+  FSxStorageType:
+    Description: Specifiy the storage type for the file system you're creating. Valid values are SSD and HDD
+    Type: String
+    AllowedValues:
+      - SSD
+      - HDD
+    Default: SSD
+
+  FSxThroughputCapacity:
+    Description: Specify the throughput of the Amazon FSx file system. Valid values are 8 -  2048. 
+      Consider choosing a higher value for better performance.
+    Type: Number
+    Default: 8
+
+  FSxDeploymentType:
+    Description: Specify the file system deployment type, valid values are MULTI_AZ_1  | SINGLE_AZ_2.
+      MULTI_AZ_1 - Deploys a high availability file system that is configured for Multi-AZ; 
+      SINGLE_AZ_2 - The latest generation Single AZ file system. Specifies a file system that is configured for single AZ redundancy and supports HDD storage type.
+    AllowedValues:
+      - MULTI_AZ_1
+      - SINGLE_AZ_2
+    Type: String
+    Default: SINGLE_AZ_2
+
+  # General
+
+  ResourceName:
+    Type: String
+    Default: fsx-through-clientvpn
+    Description: Prefix of Resources created for this workshop.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: VPC Blueprint
+        Parameters:
+        - VpcCIDR
+        - ADSubnet1CIDR
+        - ADSubnet2CIDR
+        - FSxSubnet1CIDR
+        - FSxSubnet2CIDR
+        - VPNSubnet1CIDR
+        - VPNSubnet2CIDR
+
+      - Label:
+          default: Microsoft AD
+        Parameters:
+        - ADEdition
+        - ADDomainName
+        - ADShortName
+        - ADPassword
+      - Label:
+          default: Client VPN
+        Parameters:
+        - VPNClientCidrBlock
+        - VPNServerCertArn
+        - VPNConnectionLogs
+      - Label:
+          default: Amazon FSx
+        Parameters:
+        - FSxStorageType
+        - FSxThroughputCapacity
+        - FSxStorageType
+        - FSxDeploymentType
+      - Label:
+          default: Resource Configuration
+        Parameters:
+          - ResourceName
+
+    ParameterLabels:
+      ResourceName:
+        default: "Resource Prefix"
+
+Conditions:
+  IsMultiAZ: !Equals
+    - !Ref FSxDeploymentType
+    - MULTI_AZ_1
+
+Resources:
+
+  # VPC Blueprint
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join [ -, [!Ref ResourceName, 'vpc'] ]
+
+  ADSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref ADSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Microsoft AD 1
+
+  ADSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref ADSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Microsoft AD 2
+
+  FSxSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref FSxSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: FSx 1
+
+  FSxSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref FSxSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: FSx 2
+
+  VPNSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref VPNSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: VPN 1
+
+  VPNSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref VPNSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: VPN 2
+
+
+  # Microsoft AD
+  
+  MicrosoftAD:
+    Type: AWS::DirectoryService::MicrosoftAD
+    Properties:
+      Edition: !Ref ADEdition
+      Name: !Ref ADDomainName
+      Password: !Ref ADPassword
+      ShortName: !Ref ADShortName
+      VpcSettings:
+        SubnetIds:
+        - !Ref ADSubnet1
+        - !Ref ADSubnet2
+        VpcId: !Ref VPC
+
+
+  # Client VPN
+
+  ClientVpnEndpoint:
+    Type: AWS::EC2::ClientVpnEndpoint
+    Properties: 
+      AuthenticationOptions:
+          - 
+            ActiveDirectory:
+              DirectoryId: !Ref MicrosoftAD
+            Type: directory-service-authentication
+      ClientCidrBlock: !Ref VPNClientCidrBlock
+      ConnectionLogOptions: 
+        Enabled: !Ref VPNConnectionLogs
+      Description: "Client VPN"
+      DnsServers: !GetAtt MicrosoftAD.DnsIpAddresses
+      ServerCertificateArn: !Ref VPNServerCertArn
+      SplitTunnel: true
+      VpcId: !Ref VPC
+      SecurityGroupIds: 
+        - !Ref VPNSecurityGroup
+      
+  VpnEndpointTargetNetworkAssociation1:
+    Type: AWS::EC2::ClientVpnTargetNetworkAssociation
+    Properties: 
+      ClientVpnEndpointId: !Ref ClientVpnEndpoint
+      SubnetId: !Ref VPNSubnet1
+
+  VpnEndpointTargetNetworkAssociation2:
+    Type: AWS::EC2::ClientVpnTargetNetworkAssociation
+    Properties: 
+      ClientVpnEndpointId: !Ref ClientVpnEndpoint
+      SubnetId: !Ref VPNSubnet2
+
+  VpnEndpointAuthorizationRule:
+    Type: AWS::EC2::ClientVpnAuthorizationRule
+    Properties: 
+      ClientVpnEndpointId: !Ref ClientVpnEndpoint
+      AuthorizeAllGroups: true
+      Description: Allow access to VPC subnets
+      TargetNetworkCidr: !Ref VpcCIDR 
+
+  VPNSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join [ -, [!Ref ResourceName, 'vpn-sg'] ]
+      GroupDescription: This security group is attached to the Client VPN Endpoint. 
+      VpcId: !Ref VPC
+  
+  VPNSecurityGroupIngress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VPNSecurityGroup
+      SourceSecurityGroupId: !Ref VPNSecurityGroup
+      IpProtocol: -1
+
+  VPNSecurityGroupEgress1:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref VPNSecurityGroup
+      CidrIp: 0.0.0.0/0
+      IpProtocol: -1
+
+# FSx
+  FSxSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPC
+      GroupName: !Join [ -, [!Ref ResourceName, 'fsx-sg'] ]
+      GroupDescription: Security Group for FSx for Windows File Storage Access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 88
+          ToPort: 88
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 88
+          ToPort: 88
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: udp
+          FromPort: 88
+          ToPort: 88
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: udp
+          FromPort: 88
+          ToPort: 88
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: udp
+          FromPort: 123
+          ToPort: 123
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: udp
+          FromPort: 123
+          ToPort: 123
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 135
+          ToPort: 135
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 135
+          ToPort: 135
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: udp
+          FromPort: 389
+          ToPort: 389
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: udp
+          FromPort: 389
+          ToPort: 389
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 389
+          ToPort: 389
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 389
+          ToPort: 389
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 445
+          ToPort: 445
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 445
+          ToPort: 445
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 445
+          ToPort: 445
+          SourceSecurityGroupId: !GetAtt VPNSecurityGroup.GroupId
+        - IpProtocol: udp
+          FromPort: 464
+          ToPort: 464
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: udp
+          FromPort: 464
+          ToPort: 464
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 464
+          ToPort: 464
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 464
+          ToPort: 464
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 636
+          ToPort: 636
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 636
+          ToPort: 636
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 3268
+          ToPort: 3268
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 3268
+          ToPort: 3268
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 3269
+          ToPort: 3269
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 3269
+          ToPort: 3269
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 5985
+          ToPort: 5985
+          SourceSecurityGroupId: !GetAtt VPNSecurityGroup.GroupId
+        - IpProtocol: tcp
+          FromPort: 9389
+          ToPort: 9389
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 9389
+          ToPort: 9389
+          CidrIp: !Ref ADSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: 49152
+          ToPort: 65535
+          CidrIp: !Ref ADSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: 49152
+          ToPort: 65535
+          CidrIp: !Ref ADSubnet2CIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  WindowsFSx:
+    Type: 'AWS::FSx::FileSystem'
+    Properties:
+      FileSystemType: WINDOWS
+      StorageCapacity: !Ref FSxStorageCapacity
+      StorageType: !Ref FSxStorageType
+      SecurityGroupIds: 
+        - !Ref FSxSecurityGroup
+      SubnetIds: !If
+        - IsMultiAZ
+        - 
+          - !Ref FSxSubnet1
+          - !Ref FSxSubnet2
+        - 
+          - !Ref FSxSubnet1
+      Tags:
+        - Key: Name
+          Value: !Join [ -, [!Ref ResourceName, 'fsx'] ]
+      WindowsConfiguration: 
+          ActiveDirectoryId: !Ref MicrosoftAD
+          DeploymentType: !Ref FSxDeploymentType
+          ThroughputCapacity: !Ref FSxThroughputCapacity
+
+Outputs:
+  ClientVpnEndpoint:
+    Description: "Logical ID of the Client VPN endpoint"
+    Value: !Ref ClientVpnEndpoint
+  FileSystemDNSName:
+    Description: "The Domain Name System (DNS) of the FSx File System"
+    Value: !GetAtt WindowsFSx.DNSName
